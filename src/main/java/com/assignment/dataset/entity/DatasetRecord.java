@@ -25,7 +25,6 @@ public class DatasetRecord {
     @Column(name = "dataset_name", nullable = false)
     private String datasetName;
 
-    @Lob
     @Column(name = "record_data", columnDefinition = "TEXT", nullable = false)
     private String recordData;
 
