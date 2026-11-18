@@ -100,7 +100,6 @@ class DatabaseUrlConverterTest {
     @Test
     @DisplayName("Internal Render URL (no dot in host) should NOT append sslmode")
     void should_not_add_ssl_for_internal_render_host() {
-        // Internal Render hostnames have no dots (e.g. dpg-xxxx-a)
         String internalUrl = "postgres://user:pass@dpg-xxxx-a/dbname";
 
         DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(internalUrl);
@@ -112,7 +111,6 @@ class DatabaseUrlConverterTest {
     @Test
     @DisplayName("External Render URL (dot in host) should append sslmode=require")
     void should_add_ssl_for_external_render_host() {
-        // External Render hostnames contain dots (e.g. dpg-xxxx-a.oregon-postgres.render.com)
         String externalUrl = "postgres://user:pass@dpg-xxxx-a.oregon-postgres.render.com/dbname";
 
         DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(externalUrl);
@@ -123,13 +121,176 @@ class DatabaseUrlConverterTest {
     }
 
     @Test
-    @DisplayName("External Render URL with no port (default 5432) should append sslmode=require")
+    @DisplayName("External Render URL with missing port should use default 5432 and append sslmode=require")
     void should_add_ssl_for_external_host_with_missing_port() {
-        String externalUrl = "postgres://user:pass@dpg-xxxx-a.oregon-postgres.render.com:5432/appdb";
+        // Fix: Removed :5432 so this truly tests a missing port on external host
+        String externalUrl = "postgres://user:pass@dpg-xxxx-a.oregon-postgres.render.com/appdb";
 
         DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(externalUrl);
 
-        assertThat(result.jdbcUrl()).endsWith("?sslmode=require");
+        assertThat(result.jdbcUrl()).isEqualTo(
+                "jdbc:postgresql://dpg-xxxx-a.oregon-postgres.render.com:5432/appdb?sslmode=require");
         assertThat(result.port()).isEqualTo(5432);
+    }
+
+    @Test
+    @DisplayName("If URL already contains sslmode parameter, keep it and do not append another one")
+    void should_not_duplicate_sslmode_if_already_present() {
+        String urlWithSsl = "postgres://user:pass@dpg-xxxx-a.oregon-postgres.render.com:5432/appdb?sslmode=verify-full";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(urlWithSsl);
+
+        assertThat(result.jdbcUrl()).isEqualTo(
+                "jdbc:postgresql://dpg-xxxx-a.oregon-postgres.render.com:5432/appdb?sslmode=verify-full");
+        assertThat(result.jdbcUrl()).doesNotContain("?sslmode=require");
+        assertThat(result.jdbcUrl()).doesNotContain("&sslmode=require");
+    }
+
+    @Test
+    @DisplayName("Do not add sslmode for localhost")
+    void should_not_add_ssl_for_localhost() {
+        String localUrl = "postgres://user:pass@localhost:5432/mydb";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(localUrl);
+
+        assertThat(result.jdbcUrl()).isEqualTo("jdbc:postgresql://localhost:5432/mydb");
+        assertThat(result.jdbcUrl()).doesNotContain("sslmode");
+    }
+
+    @Test
+    @DisplayName("Do not add sslmode for IPv4 addresses (e.g. 127.0.0.1 or private IPs)")
+    void should_not_add_ssl_for_ipv4_addresses() {
+        String loopback = "postgres://user:pass@127.0.0.1:5432/mydb";
+        DatabaseUrlConverter.ParsedDatabaseUrl r1 = converter.convert(loopback);
+        assertThat(r1.jdbcUrl()).isEqualTo("jdbc:postgresql://127.0.0.1:5432/mydb");
+        assertThat(r1.jdbcUrl()).doesNotContain("sslmode");
+
+        String privateIp = "postgres://user:pass@192.168.1.50:5432/mydb";
+        DatabaseUrlConverter.ParsedDatabaseUrl r2 = converter.convert(privateIp);
+        assertThat(r2.jdbcUrl()).isEqualTo("jdbc:postgresql://192.168.1.50:5432/mydb");
+        assertThat(r2.jdbcUrl()).doesNotContain("sslmode");
+    }
+
+    @Test
+    @DisplayName("Do not add sslmode for IPv6 addresses (e.g. [::1])")
+    void should_not_add_ssl_for_ipv6_addresses() {
+        String ipv6Url = "postgres://user:pass@[::1]:5432/mydb";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(ipv6Url);
+
+        assertThat(result.jdbcUrl()).isEqualTo("jdbc:postgresql://[::1]:5432/mydb");
+        assertThat(result.jdbcUrl()).doesNotContain("sslmode");
+    }
+
+    @Test
+    @DisplayName("DB_SSL_MODE override should set sslmode when specified (e.g. disable on external host)")
+    void should_honor_db_ssl_mode_override_disable() {
+        DatabaseUrlConverter overrideConverter = new DatabaseUrlConverter("disable");
+        String externalUrl = "postgres://user:pass@dpg-xxxx-a.oregon-postgres.render.com:5432/appdb";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = overrideConverter.convert(externalUrl);
+
+        assertThat(result.jdbcUrl()).isEqualTo(
+                "jdbc:postgresql://dpg-xxxx-a.oregon-postgres.render.com:5432/appdb?sslmode=disable");
+    }
+
+    @Test
+    @DisplayName("DB_SSL_MODE override should set sslmode=require on internal host when requested")
+    void should_honor_db_ssl_mode_override_require() {
+        DatabaseUrlConverter overrideConverter = new DatabaseUrlConverter("require");
+        String internalUrl = "postgres://user:pass@dpg-internal/appdb";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = overrideConverter.convert(internalUrl);
+
+        assertThat(result.jdbcUrl()).isEqualTo("jdbc:postgresql://dpg-internal:5432/appdb?sslmode=require");
+    }
+
+    @Test
+    @DisplayName("jdbc:postgresql:// URL with external host should append sslmode=require if not present")
+    void should_handle_external_jdbc_url() {
+        String jdbcExternal = "jdbc:postgresql://dpg-xxxx-a.oregon-postgres.render.com:5432/appdb";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(jdbcExternal);
+
+        assertThat(result.jdbcUrl()).isEqualTo(
+                "jdbc:postgresql://dpg-xxxx-a.oregon-postgres.render.com:5432/appdb?sslmode=require");
+        assertThat(result.host()).isEqualTo("dpg-xxxx-a.oregon-postgres.render.com");
+    }
+
+    @Test
+    @DisplayName("jdbc:postgresql:// URL with existing sslmode should not duplicate it")
+    void should_not_duplicate_sslmode_in_jdbc_url() {
+        String jdbcWithSsl = "jdbc:postgresql://dpg-xxxx-a.oregon-postgres.render.com:5432/appdb?sslmode=prefer";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(jdbcWithSsl);
+
+        assertThat(result.jdbcUrl()).isEqualTo(
+                "jdbc:postgresql://dpg-xxxx-a.oregon-postgres.render.com:5432/appdb?sslmode=prefer");
+    }
+
+    // ── Edge cases ───────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("null input throws IllegalArgumentException with 'null or empty' message")
+    void should_throw_when_input_is_null() {
+        assertThatThrownBy(() -> converter.convert(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Database URL cannot be null or empty");
+    }
+
+    @Test
+    @DisplayName("Missing database name should throw IllegalArgumentException")
+    void should_throw_when_database_name_is_missing() {
+        assertThatThrownBy(() -> converter.convert("postgres://user:pass@host:5432"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("missing database name");
+
+        assertThatThrownBy(() -> converter.convert("postgres://user:pass@host:5432/"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("missing database name");
+    }
+
+    @Test
+    @DisplayName("Non-numeric port should throw IllegalArgumentException")
+    void should_throw_when_port_is_non_numeric() {
+        assertThatThrownBy(() -> converter.convert("postgres://user:pass@host:abc/mydb"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid database URL format");
+    }
+
+    @Test
+    @DisplayName("URL without credentials should parse host and database correctly")
+    void should_handle_url_without_credentials() {
+        String url = "postgres://dpg-internal-host/mydb";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(url);
+
+        assertThat(result.username()).isNull();
+        assertThat(result.password()).isNull();
+        assertThat(result.host()).isEqualTo("dpg-internal-host");
+        assertThat(result.port()).isEqualTo(5432);
+        assertThat(result.databaseName()).isEqualTo("mydb");
+        assertThat(result.jdbcUrl()).isEqualTo("jdbc:postgresql://dpg-internal-host:5432/mydb");
+    }
+
+    @Test
+    @DisplayName("Password containing literal '+' must NOT turn into space")
+    void should_preserve_literal_plus_in_password() {
+        String urlWithPlus = "postgres://admin:pass+word@db-host:5432/testdb";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(urlWithPlus);
+
+        assertThat(result.password()).isEqualTo("pass+word");
+        assertThat(result.password()).doesNotContain(" ");
+    }
+
+    @Test
+    @DisplayName("Password containing encoded '%2B' must decode to '+'")
+    void should_decode_encoded_plus_in_password() {
+        String urlWithEncodedPlus = "postgres://admin:pass%2Bword@db-host:5432/testdb";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(urlWithEncodedPlus);
+
+        assertThat(result.password()).isEqualTo("pass+word");
     }
 }
