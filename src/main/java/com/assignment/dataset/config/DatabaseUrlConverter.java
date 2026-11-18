@@ -112,8 +112,21 @@ public class DatabaseUrlConverter {
                     .append("/")
                     .append(databaseName);
 
-            if (uri.getQuery() != null && !uri.getQuery().isBlank()) {
-                jdbcUrl.append("?").append(uri.getQuery());
+            // Carry through any query params already present in the platform URL
+            String existingQuery = uri.getQuery();
+            if (existingQuery != null && !existingQuery.isBlank()) {
+                jdbcUrl.append("?").append(existingQuery);
+            }
+
+            // Render external hosts contain a dot (e.g. dpg-xxx.oregon-postgres.render.com).
+            // External connections require SSL; internal hosts (e.g. dpg-xxx-a) do not.
+            boolean isExternalHost = host.contains(".");
+            if (isExternalHost) {
+                if (existingQuery != null && !existingQuery.isBlank()) {
+                    jdbcUrl.append("&sslmode=require");
+                } else {
+                    jdbcUrl.append("?sslmode=require");
+                }
             }
 
             return new ParsedDatabaseUrl(jdbcUrl.toString(), username, password, host, port, databaseName);

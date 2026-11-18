@@ -17,7 +17,7 @@ class DatabaseUrlConverterTest {
 
         DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(renderUrl);
 
-        assertThat(result.jdbcUrl()).isEqualTo("jdbc:postgresql://dpg-c01234567-a.oregon-postgres.render.com:5432/appdb");
+        assertThat(result.jdbcUrl()).isEqualTo("jdbc:postgresql://dpg-c01234567-a.oregon-postgres.render.com:5432/appdb?sslmode=require");
         assertThat(result.username()).isEqualTo("appuser");
         assertThat(result.password()).isEqualTo("secret123");
         assertThat(result.host()).isEqualTo("dpg-c01234567-a.oregon-postgres.render.com");
@@ -28,14 +28,14 @@ class DatabaseUrlConverterTest {
     @Test
     @DisplayName("Should convert postgresql:// scheme with default port 5432 when port is omitted")
     void should_convert_postgresql_url_with_missing_port() {
-        String urlWithoutPort = "postgresql://myuser:mypass@db.render.internal/prod_dataset";
+        String urlWithoutPort = "postgresql://myuser:mypass@dpg-render-internal/prod_dataset";
 
         DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(urlWithoutPort);
 
-        assertThat(result.jdbcUrl()).isEqualTo("jdbc:postgresql://db.render.internal:5432/prod_dataset");
+        assertThat(result.jdbcUrl()).isEqualTo("jdbc:postgresql://dpg-render-internal:5432/prod_dataset");
         assertThat(result.username()).isEqualTo("myuser");
         assertThat(result.password()).isEqualTo("mypass");
-        assertThat(result.host()).isEqualTo("db.render.internal");
+        assertThat(result.host()).isEqualTo("dpg-render-internal");
         assertThat(result.port()).isEqualTo(5432);
         assertThat(result.databaseName()).isEqualTo("prod_dataset");
     }
@@ -93,5 +93,43 @@ class DatabaseUrlConverterTest {
         String output = result.toString();
         assertThat(output).doesNotContain("verySecretPassword");
         assertThat(output).contains("******");
+    }
+
+    // ── Render SSL logic ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Internal Render URL (no dot in host) should NOT append sslmode")
+    void should_not_add_ssl_for_internal_render_host() {
+        // Internal Render hostnames have no dots (e.g. dpg-xxxx-a)
+        String internalUrl = "postgres://user:pass@dpg-xxxx-a/dbname";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(internalUrl);
+
+        assertThat(result.jdbcUrl()).isEqualTo("jdbc:postgresql://dpg-xxxx-a:5432/dbname");
+        assertThat(result.jdbcUrl()).doesNotContain("sslmode");
+    }
+
+    @Test
+    @DisplayName("External Render URL (dot in host) should append sslmode=require")
+    void should_add_ssl_for_external_render_host() {
+        // External Render hostnames contain dots (e.g. dpg-xxxx-a.oregon-postgres.render.com)
+        String externalUrl = "postgres://user:pass@dpg-xxxx-a.oregon-postgres.render.com/dbname";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(externalUrl);
+
+        assertThat(result.jdbcUrl()).isEqualTo(
+                "jdbc:postgresql://dpg-xxxx-a.oregon-postgres.render.com:5432/dbname?sslmode=require");
+        assertThat(result.host()).isEqualTo("dpg-xxxx-a.oregon-postgres.render.com");
+    }
+
+    @Test
+    @DisplayName("External Render URL with no port (default 5432) should append sslmode=require")
+    void should_add_ssl_for_external_host_with_missing_port() {
+        String externalUrl = "postgres://user:pass@dpg-xxxx-a.oregon-postgres.render.com:5432/appdb";
+
+        DatabaseUrlConverter.ParsedDatabaseUrl result = converter.convert(externalUrl);
+
+        assertThat(result.jdbcUrl()).endsWith("?sslmode=require");
+        assertThat(result.port()).isEqualTo(5432);
     }
 }

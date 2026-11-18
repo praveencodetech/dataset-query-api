@@ -17,8 +17,8 @@ WORKDIR /app
 # Create dedicated non-root application group and user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# Copy built artifact from builder stage
-COPY --from=builder --chown=appuser:appgroup /build/target/dataset-service-*.jar app.jar
+# Copy only the executable jar using the fixed finalName (never matches *.jar.original)
+COPY --from=builder --chown=appuser:appgroup /build/target/dataset-service.jar app.jar
 
 # Switch to non-root user
 USER appuser
@@ -26,5 +26,10 @@ USER appuser
 # Expose standard container port
 EXPOSE 8080
 
-# Configure container entrypoint
+# JVM memory tuning for Render free tier (512 MB).
+# MaxRAMPercentage=70 → ~358 MB heap; SerialGC reduces GC overhead threads.
+# Override at runtime by setting JAVA_TOOL_OPTIONS in the Render dashboard.
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
+
+# exec-form ENTRYPOINT: JVM receives OS signals (SIGTERM) for graceful shutdown.
 ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "app.jar"]

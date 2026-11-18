@@ -14,8 +14,13 @@ import javax.sql.DataSource;
 
 /**
  * Production DataSource configuration active only in the 'prod' profile.
- * Reads DATABASE_URL (handling Render's postgres:// format via DatabaseUrlConverter)
- * and configures a resilient PostgreSQL Hikari connection pool.
+ *
+ * <p>Reads DATABASE_URL (handling Render's postgres:// format via DatabaseUrlConverter)
+ * and configures a resilient PostgreSQL Hikari connection pool tuned for the Render
+ * free tier (512 MB RAM, shared CPU).
+ *
+ * <p>Pool size defaults to 5 and is overridable via the {@code DB_POOL_SIZE}
+ * environment variable so it can be adjusted without a code change.
  */
 @Configuration
 @Profile("prod")
@@ -33,6 +38,10 @@ public class ProdDataSourceConfig {
 
     @Value("${SPRING_DATASOURCE_PASSWORD:}")
     private String envPassword;
+
+    /** Maximum pool size. Default 5 is safe for Render free tier. Override via DB_POOL_SIZE. */
+    @Value("${DB_POOL_SIZE:5}")
+    private int dbPoolSize;
 
     public ProdDataSourceConfig(DatabaseUrlConverter urlConverter) {
         this.urlConverter = urlConverter;
@@ -52,8 +61,8 @@ public class ProdDataSourceConfig {
         String username = (envUsername != null && !envUsername.isBlank()) ? envUsername : parsed.username();
         String password = (envPassword != null && !envPassword.isBlank()) ? envPassword : parsed.password();
 
-        log.info("Configuring production PostgreSQL DataSource: host={}, port={}, db={}, username={}",
-                parsed.host(), parsed.port(), parsed.databaseName(), username);
+        log.info("Configuring production PostgreSQL DataSource: host={}, port={}, db={}, username={}, poolSize={}",
+                parsed.host(), parsed.port(), parsed.databaseName(), username, dbPoolSize);
 
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl(parsed.jdbcUrl());
@@ -61,19 +70,22 @@ public class ProdDataSourceConfig {
         config.setPassword(password);
         config.setDriverClassName("org.postgresql.Driver");
 
-        // Cloud resiliency settings
-        config.setConnectionTimeout(10000); // 10 seconds
+        // Pool tuning for Render free tier (512 MB RAM).
+        // connectionTimeout: fail fast (20 s) rather than hanging a request thread.
+        // idleTimeout / maxLifetime: shorter than Render's idle DB timeout (~5 min).
+        config.setMaximumPoolSize(dbPoolSize);
+        config.setMinimumIdle(1);
+        config.setConnectionTimeout(20000);    // 20 seconds
+        config.setIdleTimeout(300000);         // 5 minutes
+        config.setMaxLifetime(600000);         // 10 minutes
         config.setInitializationFailTimeout(15000); // 15 seconds before giving up on boot
-        config.setMaximumPoolSize(10);
-        config.setMinimumIdle(2);
-        config.setIdleTimeout(600000); // 10 minutes
-        config.setMaxLifetime(1800000); // 30 minutes
         config.setPoolName("DatasetProdHikariPool");
 
         try {
             return new HikariDataSource(config);
         } catch (Exception e) {
-            log.error("Failed to establish initial PostgreSQL connection to {}:{}. Verify that the database is active and reachable: {}",
+            log.error("Failed to establish initial PostgreSQL connection to {}:{}. " +
+                            "Verify that the database is active and reachable: {}",
                     parsed.host(), parsed.port(), e.getMessage());
             throw e;
         }

@@ -1,0 +1,69 @@
+name: CI – Test and Docker Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  # ── Job 1: Unit + Integration tests on H2 ─────────────────────────────────
+  test:
+    name: Run Tests (H2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run unit and integration tests
+        run: mvn clean test -B
+
+      - name: Upload Surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+
+  # ── Job 2: Docker build (real Dockerfile verification) ────────────────────
+  docker-build:
+    name: Docker Build
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Package jar (skip tests – already run above)
+        run: mvn package -DskipTests -B
+
+      - name: Build Docker image
+        run: docker build -t dataset-api:ci .
+
+      - name: Smoke-test Docker image (health check)
+        run: |
+          docker run -d --name dataset-ci -p 8080:8080 dataset-api:ci
+          # Wait up to 30 s for the app to become healthy
+          for i in $(seq 1 15); do
+            sleep 2
+            STATUS=$(curl -sf http://localhost:8080/actuator/health 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "WAIT")
+            echo "Attempt $i: $STATUS"
+            if [ "$STATUS" = "UP" ]; then break; fi
+          done
+          if [ "$STATUS" != "UP" ]; then
+            echo "ERROR: Health check did not return UP within 30 s"
+            docker logs dataset-ci
+            exit 1
+          fi
+          docker stop dataset-ci
