@@ -6,9 +6,9 @@ A production-quality Spring Boot 3 REST API that stores arbitrary JSON records p
 
 ## Live Demo
 
-- **Live API Base URL**: `<to be added>`
-- **Interactive Swagger UI**: `<to be added>` *(e.g., `https://<your-render-url>/` or `https://<your-render-url>/swagger-ui.html`)*
-- **Health Check Endpoint**: `<to be added>/actuator/health`
+- **Live API Base URL**: `https://dataset-query-api-vja0.onrender.com`
+- **Interactive Swagger UI**: `https://dataset-query-api-vja0.onrender.com/swagger-ui/index.html#/`
+- **Health Check Endpoint**: `https://dataset-query-api-vja0.onrender.com/actuator/health`
 
 ---
 
